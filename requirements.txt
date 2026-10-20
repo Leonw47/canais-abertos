@@ -1,0 +1,4 @@
+python-vlc
+pillow
+# só para gerar o instalador:
+pyinstaller

@@ -1,0 +1,6 @@
+# gerados pelo instalador/gerar_instalador.ps1
+instalador/build/
+instalador/dist/
+instalador/*.exe
+__pycache__/
+*.pyc
