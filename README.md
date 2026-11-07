@@ -8,6 +8,10 @@ TV ao vivo em português para Windows, **só com fontes abertas e gratuitas** �
   públicas, educativas, regionais e religiosas transmitindo dos próprios servidores; saem retransmissões de TV
   paga (IPs soltos, domínios de retransmissão, marcas de TV por assinatura fora de plataformas gratuitas).
 - O programa **não importa listas M3U inteiras** de propósito: listas com canais pagos são pirataria.
+- **🌎 Canais em inglês/espanhol:** desenhos, animes, filmes e séries dos canais gratuitos oficiais de fora
+  (Pluto TV de outros países, Samsung TV Plus, Plex…) — Sonic TV, Crunchyroll, One Piece, South Park e muitos
+  outros. Só plataformas gratuitas: nas listas de fora, canais pagos (Cartoon Network, Adult Swim…) só aparecem
+  como retransmissão pirata e ficam de fora. A opção "🌎 Canais em inglês/espanhol" mostra ou esconde todos.
 - **Meus canais:** dá para adicionar um canal próprio por link, endereço de rede ou frequência da antena
   digital (ISDB-T, com sintonizador USB). Esses não passam pelo filtro — a fonte é responsabilidade de quem adiciona.
 

@@ -3,7 +3,8 @@
 Canais Abertos — TV ao vivo em português, só com fontes abertas e gratuitas.
 
 Usa a lista pública do projeto iptv-org (canais em português) e mantém apenas transmissões
-legítimas: emissoras nos próprios servidores (públicas, educativas, regionais, religiosas…) e
+legítimas (e, em "🌎 outros idiomas", desenhos/animes/filmes/séries em inglês e espanhol só das plataformas
+gratuitas oficiais): emissoras nos próprios servidores (públicas, educativas, regionais, religiosas…) e
 canais gratuitos oficiais com anúncios (Pluto TV, Samsung TV Plus e similares). Retransmissões
 de TV paga (servidas de IPs soltos ou de domínios de retransmissão) ficam de fora.
 "➕ Adicionar canal" guarda canais próprios (link, endereço de rede ou frequência da antena digital)
@@ -60,7 +61,19 @@ FAST_HOSTS = [
     (r"(^|\.)wurl\.(tv|com)$", "Canal gratuito"), (r"(^|\.)amagi\.tv$", "Canal gratuito"),
     (r"mediatailor\..*amazonaws\.com$", "Canal gratuito"), (r"fast\.jwp\.services$", "Canal gratuito"),
     (r"(^|\.)xumo\.", "Xumo"), (r"(^|\.)plex\.tv$", "Plex"), (r"(^|\.)runtime\.tv$", "Runtime"),
+    (r"(^|\.)getpublica\.com$", "Canal gratuito"),     # plataforma de anúncios de canais gratuitos (ex.: Sonic TV)
 ]
+
+# Outros idiomas: desenhos, animes, filmes e séries dos canais gratuitos oficiais de fora (inglês e espanhol).
+# Só entram transmissões de plataformas gratuitas (Pluto TV, Samsung TV Plus, Plex…) — nada de "emissora" solta,
+# que nas listas de fora é quase sempre retransmissão de canal pago.
+LISTAS_GENERO = {"animation": "Desenhos e Animes", "movies": "Filmes", "series": "Séries",
+                 "comedy": "Comédia", "classic": "Clássicos"}
+GENERO_URL = "https://iptv-org.github.io/iptv/categories/{}.m3u"
+FEEDS_URL = "https://iptv-org.github.io/api/feeds.json"
+IDIOMAS = {"eng": "inglês", "spa": "espanhol"}
+OUTROS = "🌎 "                 # prefixo das categorias de outros idiomas
+EXT = "ext."                   # prefixo da chave desses canais
 # Marcas de TV paga (ou da TV Globo, que só transmite ao vivo com login): só valem nas plataformas oficiais.
 PAGA = re.compile(
     r"cartoon network|discovery|disney|dreamworks|gloob|tooncast|baby ?tv|jim ?jam|zoomoo|dum ?dum|box kids|"
@@ -300,8 +313,114 @@ class Pluto:
         return out
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# OUTROS IDIOMAS — canais gratuitos oficiais de fora, por gênero
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def baixar_cache(nome, url, forcar=False, validade=VALIDADE_LISTA):
+    """Baixa (ou usa a cópia guardada, se recente) um arquivo da lista. Sem internet, usa a cópia antiga."""
+    DADOS.mkdir(parents=True, exist_ok=True)
+    arq = DADOS / nome
+    if not forcar and arq.exists() and time.time() - arq.stat().st_mtime < validade:
+        return arq.read_text(encoding="utf-8")
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": UA})
+        with urllib.request.urlopen(req, timeout=60) as r:
+            texto = r.read().decode("utf-8", "replace")
+        arq.write_text(texto, encoding="utf-8")
+        return texto
+    except Exception:
+        if arq.exists():
+            return arq.read_text(encoding="utf-8")
+        raise
+
+
+def fonte_gratuita(url):
+    """Rótulo da plataforma gratuita oficial (FAST) da transmissão, ou None. Pluto de fora do Brasil leva outro
+    rótulo para não ser trocada pela grade oficial brasileira."""
+    try:
+        p = urlparse(url)
+    except ValueError:
+        return None
+    host = (p.hostname or "").lower()
+    if host == "jmp2.uk":
+        pref = p.path.strip("/").split("-")[0]
+        if pref not in JMP2:
+            return None
+        return "Pluto TV (exterior)" if pref == "plu" else JMP2[pref]
+    for padrao, rotulo in FAST_HOSTS:
+        if re.search(padrao, host):
+            return "Pluto TV (exterior)" if rotulo == "Pluto TV" else rotulo
+    return None
+
+
+def montar_outros(textos, feeds):
+    """textos: {gênero: m3u}; feeds: lista do feeds.json (idiomas de cada sinal). Canais em inglês ou espanhol."""
+    idioma_de = {(f["channel"], f["id"]): f.get("languages") or [] for f in feeds}
+    principal = {f["channel"]: f.get("languages") or [] for f in feeds if f.get("is_main")}
+    canais = {}
+    for genero, texto in textos.items():
+        cat = f"{OUTROS}{LISTAS_GENERO[genero]} (outros idiomas)"
+        for attrs, nome_bruto, url, opcoes in ler_m3u(texto):
+            grupos = [g.strip().lower() for g in (attrs.get("group-title") or "").split(";")]
+            if "xxx" in grupos:
+                continue
+            fonte = fonte_gratuita(url)
+            tvg = attrs.get("tvg-id", "")
+            if not fonte or not tvg:
+                continue
+            ch, _, feed = tvg.partition("@")
+            langs = idioma_de.get((ch, feed)) or principal.get(ch) or []
+            if "por" in langs:          # em português já vem na lista principal
+                continue
+            idioma = next((IDIOMAS[l] for l in langs if l in IDIOMAS), None)
+            if not idioma:
+                continue
+            chave = EXT + tvg
+            c = canais.get(chave)
+            if c is None:
+                nome = f"{limpar_nome(nome_bruto)} · {idioma}"
+                c = canais[chave] = Canal(chave, nome, attrs.get("tvg-logo", ""), [cat], ch.rsplit(".", 1)[-1].upper())
+                qualidade = (re.search(r"\((\d{3,4}[pi])\)", nome_bruto) or [None, ""])[1]
+                c.transmissoes.append(Transmissao(url, qualidade, fonte, opcoes.get("http-referrer", ""),
+                                                  opcoes.get("http-user-agent", ""), "Not 24/7" in nome_bruto,
+                                                  "Geo-blocked" in nome_bruto))
+            elif cat not in c.categorias:
+                c.categorias.append(cat)
+    # o mesmo canal em versões de vários países (South Park da Suécia, da Noruega…): fica uma por nome e idioma,
+    # de preferência a dos EUA ou da América Latina (as que abrem daqui)
+    regiao = re.compile(r"\s*\((Germany|Sweden|Norway|Denmark|United States|United Kingdom|Spain|France|Italy|"
+                        r"Canada|Latin America)\)|\s+(DK|NO|SE|GB|UK|CA|DE|ES|FR|IT|LatAm|Spain)\b", re.I)
+    pref = {"US": 0, "SD": 1, "LatAm": 2, "MX": 3}
+    melhor = {}
+    for c in canais.values():
+        base, _, idioma = c.nome.rpartition(" · ")
+        k = (norm(regiao.sub("", base).strip()), idioma)
+        ordem = pref.get(c.chave.partition("@")[2], 9)
+        atual = melhor.get(k)
+        if atual is None or ordem < atual[0]:
+            if atual:
+                c.categorias = list(dict.fromkeys(c.categorias + atual[1].categorias))
+            melhor[k] = (ordem, c)
+        else:
+            atual[1].categorias = list(dict.fromkeys(atual[1].categorias + c.categorias))
+    saida = []
+    for _, c in melhor.values():
+        base, _, idioma = c.nome.rpartition(" · ")
+        c.nome = f"{regiao.sub('', base).strip()} · {idioma}"
+        saida.append(c)
+    return saida
+
+
+def carregar_outros(forcar=False):
+    textos = {g: baixar_cache(f"genero_{g}.m3u", GENERO_URL.format(g), forcar) for g in LISTAS_GENERO}
+    feeds = json.loads(baixar_cache("feeds.json", FEEDS_URL, forcar))
+    return montar_outros(textos, feeds)
+
+
 def carregar_tudo(pluto, forcar=False):
-    """Pluto TV Brasil (oficial) + emissoras da lista iptv-org. Devolve (canais, aviso)."""
+    """Pluto TV Brasil (oficial) + emissoras da lista iptv-org + canais gratuitos oficiais de fora (outros idiomas).
+    Devolve (canais, aviso)."""
     aviso = ""
     try:
         texto = baixar_lista(forcar)
@@ -321,6 +440,10 @@ def carregar_tudo(pluto, forcar=False):
         for c in canais:
             c.transmissoes = [t for t in c.transmissoes if t.fonte != "Pluto TV"]
         canais = [c for c in canais if c.transmissoes] + do_pluto
+    try:
+        canais += carregar_outros(forcar)
+    except Exception as e:
+        aviso = (aviso + " " if aviso else "") + f"Canais de outros idiomas indisponíveis agora ({e})."
     return sorted(canais, key=lambda c: norm(c.nome)), aviso
 
 
@@ -422,7 +545,7 @@ def testar_transmissao(t, pluto=None):
 class Estado:
     def __init__(self):
         self.d = {"favoritos": [], "volume": 70, "ultimo": "", "modo_criancas": False,
-                  "esconder_fora": False, "testes": {}, "geometria": ""}
+                  "esconder_fora": False, "outros_idiomas": True, "testes": {}, "geometria": ""}
         try:
             self.d.update(json.loads(ARQ_ESTADO.read_text(encoding="utf-8")))
         except Exception:
@@ -534,10 +657,14 @@ def app():
                 if estado["fase"] == "lista" and len(self.canais) > 100:
                     r["canais"] = len(self.canais)
                     r["infantis"] = sum(1 for c in self.canais if c.infantil)
-                    alvo = next((c for c in self.canais if c.nome.startswith("Turma da M")),
+                    r["outros_idiomas"] = sum(1 for c in self.canais if c.chave.startswith(EXT))
+                    # canal do teste: CA_AUTOTESTE_CANAL (começo do nome) ou a Turma da Mônica; toca sem som
+                    pedido = os.environ.get("CA_AUTOTESTE_CANAL", "Turma da M")
+                    alvo = next((c for c in self.canais if c.nome.startswith(pedido)),
                                 next(c for c in self.canais if c.infantil))
                     r["canal"] = alvo.nome
                     self.tocar(alvo)
+                    self.player.audio_set_mute(True)
                     estado["fase"], estado["t"] = "tocando", time.time()
                 elif estado["fase"] == "tocando":
                     if self.player.get_state() == vlc.State.Playing and not self.msg_video.winfo_ismapped():
@@ -591,8 +718,10 @@ def app():
             self.lb_cat.bind("<<ListboxSelect>>", lambda e: self._filtrar())
             self.v_criancas = tk.BooleanVar(value=bool(self.est.d.get("modo_criancas")))
             self.v_esconder = tk.BooleanVar(value=bool(self.est.d.get("esconder_fora")))
+            self.v_outros = tk.BooleanVar(value=bool(self.est.d.get("outros_idiomas", True)))
             for txt, var in (("🧸 Modo crianças (só infantis)", self.v_criancas),
-                             ("Esconder canais fora do ar", self.v_esconder)):
+                             ("Esconder canais fora do ar", self.v_esconder),
+                             ("🌎 Canais em inglês/espanhol", self.v_outros)):
                 tk.Checkbutton(self.col1, text=txt, variable=var, command=self._opcoes, bg=BG, fg=FG,
                                selectcolor=BG2, activebackground=BG, activeforeground=FG, font=FONT,
                                anchor="w").pack(fill=tk.X)
@@ -715,7 +844,8 @@ def app():
                     self._selecionar(c)
 
         def _atualizar_canais(self):
-            self.canais = sorted(self.base + [canal_meu(d) for d in ler_meus()], key=lambda c: norm(c.nome))
+            base = self.base if self.v_outros.get() else [c for c in self.base if not c.chave.startswith(EXT)]
+            self.canais = sorted(base + [canal_meu(d) for d in ler_meus()], key=lambda c: norm(c.nome))
             self._montar_categorias()
             self._filtrar()
 
@@ -795,7 +925,11 @@ def app():
         def _opcoes(self):
             self.est.d["modo_criancas"] = self.v_criancas.get()
             self.est.d["esconder_fora"] = self.v_esconder.get()
+            outros_antes = self.est.d.get("outros_idiomas", True)
+            self.est.d["outros_idiomas"] = self.v_outros.get()
             self.est.salvar()
+            if outros_antes != self.v_outros.get():
+                self._atualizar_canais()
             self.b_add.config(state=tk.DISABLED if self.v_criancas.get() else tk.NORMAL)
             self._montar_categorias()
             self._filtrar()
@@ -1278,6 +1412,9 @@ def listar():
     from collections import Counter
     print("fontes:", Counter(t.fonte for c in canais for t in c.transmissoes).most_common())
     print("infantis:", ", ".join(c.nome for c in canais if c.infantil))
+    outros = [c for c in canais if c.chave.startswith(EXT)]
+    print(f"\nOUTROS IDIOMAS: {len(outros)} canais", Counter(k for c in outros for k in c.categorias).most_common())
+    print("  desenhos/animes:", ", ".join(c.nome for c in outros if any("Desenhos" in k for k in c.categorias)))
     print(f"\nSAEM: {len(motivos)} transmissões")
     print(Counter(m for _, m, _ in motivos).most_common())
     for nome, m, url in sorted(motivos)[:400]:

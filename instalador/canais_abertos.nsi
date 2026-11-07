@@ -3,7 +3,7 @@ Unicode true
 !include "MUI2.nsh"
 
 !define APP "Canais Abertos"
-!define VERSAO "1.1.0"
+!define VERSAO "1.2.0"
 !define EXE "Canais Abertos.exe"
 !define CHAVE "Software\Microsoft\Windows\CurrentVersion\Uninstall\CanaisAbertos"
 
